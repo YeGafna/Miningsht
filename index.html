@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>iPad Factory - Pixel Edition</title>
+    <style>
+        body { margin: 0; background: #2b452f; color: #eee; font-family: 'Courier New', Courier, monospace; overflow: hidden; touch-action: none; }
+        
+        /* Inventar Oben Links */
+        #ui { position: absolute; top: 10px; left: 10px; background: rgba(20, 30, 20, 0.9); padding: 10px; border-radius: 8px; border: 4px solid #5d4037; pointer-events: none; display: flex; gap: 15px; font-weight: bold; font-size: 14px; text-shadow: 1px 1px 0 #000; box-shadow: 4px 4px 0 rgba(0,0,0,0.5); }
+        .res-col { display: flex; flex-direction: column; gap: 5px; }
+        .t-iron { color: #b0c4de; } .t-copper { color: #ffa07a; }
+        
+        /* System Menü Oben Rechts */
+        #sysMenu { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 5px; }
+        .sys-btn { padding: 8px; background: #4e342e; color: white; border: 2px solid #3e2723; border-radius: 4px; font-family: inherit; font-weight: bold; box-shadow: 2px 2px 0 #000; }
+        .sys-btn:active { transform: translate(2px, 2px); box-shadow: none; }
+        
+        /* Toolbar Unten - Besser Beschriftet */
+        #toolbar-container { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 5px; width: 95%; max-width: 650px; }
+        .tool-group { background: rgba(20,20,20,0.85); border: 3px solid #5d4037; border-radius: 8px; padding: 5px; box-shadow: 4px 4px 0 rgba(0,0,0,0.5); }
+        .tool-title { text-align: center; font-size: 12px; color: #ffeb3b; margin-bottom: 5px; font-weight: bold; text-shadow: 1px 1px 0 #000; }
+        .toolbar-row { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; }
+        
+        .btn { padding: 10px; background: #3e2723; color: #ccc; border: 2px solid #2e1a17; border-radius: 4px; font-family: inherit; font-size: 11px; font-weight: bold; flex: 1; min-width: 50px; text-align: center; }
+        .btn.selected { background: #4caf50; color: #fff; border-color: #2e7d32; box-shadow: inset 0 0 10px rgba(0,0,0,0.5); }
+        .btn-dir { font-size: 16px; background: #263238; }
+        .btn-dir.selected { background: #ff9800; color: #fff; }
+        
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div class="res-col t-iron">
+            <div>⚙️ Fe-Erz: <span id="res-fe_ore">0</span></div>
+            <div>🧱 Fe-Barren: <span id="res-fe_ingot">10</span></div>
+            <div>🛡️ Fe-Platte: <span id="res-fe_plate">0</span></div>
+        </div>
+        <div class="res-col t-copper">
+            <div>⚙️ Cu-Erz: <span id="res-cu_ore">0</span></div>
+            <div>🧱 Cu-Barren: <span id="res-cu_ingot">10</span></div>
+            <div>🔌 Cu-Kabel: <span id="res-cu_wire">0</span></div>
+        </div>
+    </div>
+    
+    <div id="sysMenu">
+        <button class="sys-btn" onclick="exportCode()" style="background: #1565c0;">💾 Export</button>
+        <button class="sys-btn" onclick="importCode()" style="background: #2e7d32;">📂 Import</button>
+        <button class="sys-btn" onclick="clearSave()" style="background: #c62828;">⚠️ RESET</button>
+    </div>
+    
+    <div id="toolbar-container">
+        <div class="tool-group">
+            <div class="tool-title">1. WOHIN soll das Item fallen? (Richtung)</div>
+            <div class="toolbar-row">
+                <button class="btn btn-dir" id="dir-3">⬆️ Oben</button>
+                <button class="btn btn-dir selected" id="dir-0">➡️ Rechts</button>
+                <button class="btn btn-dir" id="dir-1">⬇️ Unten</button>
+                <button class="btn btn-dir" id="dir-2">⬅️ Links</button>
+            </div>
+        </div>
+        
+        <div class="tool-group">
+            <div class="tool-title">2. WAS willst du bauen?</div>
+            <div class="toolbar-row">
+                <button class="btn selected" id="btn-belt">Band</button>
+                <button class="btn" id="btn-miner_fe">Fe-Miner</button>
+                <button class="btn" id="btn-miner_cu">Cu-Miner</button>
+                <button class="btn" id="btn-smelter">Ofen</button>
+                <button class="btn" id="btn-constructor">Fabrik</button>
+                <button class="btn" id="btn-delete" style="background: #b71c1c; color:#fff;">LÖSCHEN</button>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const tileSize = 70;
+        
+        // 0: Rechts, 1: Unten, 2: Links, 3: Oben
+        const dx = [1, 0, -1, 0];
+        const dy = [0, 1, 0, -1];
+        
+        let buildDir = 0; 
+        let mode = 'belt';
+        let grid = {};
+        
+        let resources = {
+            fe_ore: 0, fe_ingot: 20, fe_plate: 0,
+            cu_ore: 0, cu_ingot: 20, cu_wire: 0
+        };
+
+        if(localStorage.getItem('factoryV3')) {
+            try {
+                const data = JSON.parse(localStorage.getItem('factoryV3'));
+                grid = data.grid || {}; resources = data.resources || resources;
+            } catch(e) {}
+        }
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // --- BEDIENUNG ---
+        document.querySelectorAll('.btn-dir').forEach(btn => {
+            btn.onclick = () => {
+                buildDir = parseInt(btn.id.split('-')[1]);
+                document.querySelectorAll('.btn-dir').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+            };
+        });
+
+        document.querySelectorAll('.btn:not(.btn-dir)').forEach(btn => {
+            btn.onclick = () => {
+                mode = btn.id.replace('btn-', '');
+                document.querySelectorAll('.btn:not(.btn-dir)').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+            };
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            if(e.touches[0].clientY > window.innerHeight - 180) return; // Toolbar
+            if(e.touches[0].clientY < 120 && e.touches[0].clientX > window.innerWidth - 120) return; // Menu
+
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor((e.touches[0].clientX - rect.left) / tileSize);
+            const y = Math.floor((e.touches[0].clientY - rect.top) / tileSize);
+            const key = `${x},${y}`;
+
+            if (mode === 'delete') {
+                delete grid[key];
+            } else if (!grid[key]) {
+                const cost = mode === 'belt' ? 1 : 5;
+                if (resources.fe_ingot >= cost) { resources.fe_ingot -= cost; placeBuilding(key, mode, buildDir); } 
+                else if (resources.cu_ingot >= cost) { resources.cu_ingot -= cost; placeBuilding(key, mode, buildDir); }
+            }
+            saveGame();
+        });
+
+        function placeBuilding(key, type, dir) {
+            if(type === 'belt') grid[key] = { type, dir, items: [] };
+            else grid[key] = { type, dir, input: null, timer: 0 };
+        }
+
+        function exportCode() { prompt("Dein Code:", btoa(encodeURIComponent(JSON.stringify({ grid, resources })))); }
+        function importCode() { 
+            const str = prompt("Code einfügen:"); if(!str) return;
+            try { const data = JSON.parse(decodeURIComponent(atob(str))); grid = data.grid; resources = data.resources; saveGame(); alert("Geladen!"); } 
+            catch(e) { alert("Code ungültig!"); } 
+        }
+        function saveGame() { localStorage.setItem('factoryV3', JSON.stringify({ grid, resources })); }
+        function clearSave() { if(confirm("Reset?")) { localStorage.removeItem('factoryV3'); location.reload(); } }
+        setInterval(saveGame, 5000);
+
+        // --- PIXEL ART ZEICHNER ---
+        function drawPixelRect(x, y, w, h, color) { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); }
+
+        function drawMiner(x, y, isIron) {
+            drawPixelRect(x+10, y+15, 50, 40, "#546e7a"); // Basis
+            drawPixelRect(x+20, y+5, 30, 10, "#37474f"); // Dach
+            drawPixelRect(x+30, y+25, 10, 20, "#cfd8dc"); // Bohrer
+            // Markierung Eisen/Kupfer
+            drawPixelRect(x+15, y+20, 10, 10, isIron ? "#b0c4de" : "#ffa07a"); 
+        }
+
+        function drawSmelter(x, y, isWorking) {
+            drawPixelRect(x+10, y+10, 50, 50, "#8d6e63"); // Ziegel Basis
+            drawPixelRect(x+15, y+15, 20, 10, "#5d4037"); // Mauer Textur
+            drawPixelRect(x+35, y+30, 20, 10, "#5d4037"); // Mauer Textur
+            drawPixelRect(x+20, y+35, 30, 25, "#212121"); // Loch
+            if(isWorking) {
+                drawPixelRect(x+25, y+40, 20, 15, "#ff9800"); // Feuer
+                drawPixelRect(x+30, y+45, 10, 10, "#ffeb3b"); // Heißes Feuer
+            }
+        }
+
+        function drawFactory(x, y, isWorking) {
+            drawPixelRect(x+5, y+25, 60, 40, "#607d8b"); // Halle
+            drawPixelRect(x+5, y+15, 60, 10, "#455a64"); // Dach
+            drawPixelRect(x+45, y+5, 10, 20, "#37474f"); // Schornstein
+            drawPixelRect(x+15, y+35, 15, 15, "#000"); // Fenster
+            drawPixelRect(x+40, y+35, 15, 15, "#000"); // Fenster
+            if(isWorking) drawPixelRect(x+45, y+0, 10, 5, "#cfd8dc"); // Rauch
+        }
+
+        function drawDirection(x, y, dir, isBelt) {
+            ctx.fillStyle = isBelt ? "rgba(255, 255, 255, 0.4)" : "rgba(255, 235, 59, 0.8)";
+            ctx.save();
+            ctx.translate(x + tileSize/2, y + tileSize/2);
+            ctx.rotate(dir * Math.PI / 2);
+            ctx.beginPath(); ctx.moveTo(15, 0); ctx.lineTo(-10, 12); ctx.lineTo(-10, -12); ctx.fill();
+            if(!isBelt) { ctx.fillStyle="#000"; ctx.font="10px Arial"; ctx.fillText("OUT", -5, 3); }
+            ctx.restore();
+        }
+
+        function drawItem(type, x, y) {
+            ctx.shadowBlur = 4; ctx.shadowColor = '#000';
+            if(type === 'fe_ore') { drawPixelRect(x-6, y-6, 12, 12, "#b0c4de"); }
+            if(type === 'cu_ore') { drawPixelRect(x-6, y-6, 12, 12, "#ffa07a"); }
+            if(type === 'fe_ingot') { drawPixelRect(x-8, y-5, 16, 10, "#eceff1"); }
+            if(type === 'cu_ingot') { drawPixelRect(x-8, y-5, 16, 10, "#ffcc80"); }
+            if(type === 'fe_plate') { drawPixelRect(x-10, y-10, 20, 20, "#90a4ae"); drawPixelRect(x-4, y-4, 8, 8, "#263238"); }
+            if(type === 'cu_wire') { drawPixelRect(x-8, y-2, 16, 4, "#ffd54f"); }
+            ctx.shadowBlur = 0;
+        }
+
+        // --- GAME LOOP ---
+        function gameLoop() {
+            ctx.fillStyle = "#2b452f"; ctx.fillRect(0, 0, canvas.width, canvas.height); // Gras Hintergrund
+            
+            ctx.strokeStyle = "#1b2e1e"; ctx.lineWidth = 2;
+            for(let x=0; x<canvas.width; x+=tileSize) ctx.strokeRect(x, 0, 0, canvas.height);
+            for(let y=0; y<canvas.height; y+=tileSize) ctx.strokeRect(0, y, canvas.width, 0);
+
+            for (let key in grid) {
+                const [cx, cy] = key.split(',').map(Number);
+                const obj = grid[key];
+                const x = cx * tileSize; const y = cy * tileSize;
+
+                if (obj.type === 'belt') {
+                    drawPixelRect(x+10, y+10, tileSize-20, tileSize-20, "#263238");
+                    drawDirection(x, y, obj.dir, true);
+                    
+                    obj.items.forEach((item, i) => {
+                        item.p += 0.02;
+                        let drawX = x + tileSize/2; let drawY = y + tileSize/2;
+                        if(obj.dir === 0) drawX = x + item.p * tileSize;
+                        if(obj.dir === 1) drawY = y + item.p * tileSize;
+                        if(obj.dir === 2) drawX = x + tileSize - (item.p * tileSize);
+                        if(obj.dir === 3) drawY = y + tileSize - (item.p * tileSize);
+                        
+                        drawItem(item.t, drawX, drawY);
+
+                        if (item.p >= 1) {
+                            const nextKey = `${cx+dx[obj.dir]},${cy+dy[obj.dir]}`;
+                            if (grid[nextKey]) {
+                                const nextObj = grid[nextKey];
+                                if (nextObj.type === 'belt') nextObj.items.push({...item, p: 0});
+                                else if (nextObj.type === 'smelter' && item.t.includes('ore') && !nextObj.input) nextObj.input = item.t;
+                                else if (nextObj.type === 'constructor' && item.t.includes('ingot') && !nextObj.input) nextObj.input = item.t;
+                                else resources[item.t]++; 
+                            } else { resources[item.t]++; }
+                            obj.items.splice(i, 1);
+                        }
+                    });
+                } else {
+                    // Zeichne Gebäude
+                    drawPixelRect(x+5, y+5, tileSize-10, tileSize-10, "rgba(0,0,0,0.3)"); // Schatten
+                    if (obj.type.startsWith('miner')) {
+                        drawMiner(x, y, obj.type === 'miner_fe');
+                        obj.timer++;
+                        if(obj.timer > 90) {
+                            const nextKey = `${cx+dx[obj.dir]},${cy+dy[obj.dir]}`;
+                            const resType = obj.type === 'miner_fe' ? 'fe_ore' : 'cu_ore';
+                            if(grid[nextKey] && grid[nextKey].type === 'belt') grid[nextKey].items.push({t: resType, p: 0});
+                            else resources[resType]++;
+                            obj.timer = 0;
+                        }
+                    }
+                    if (obj.type === 'smelter') {
+                        drawSmelter(x, y, obj.input != null);
+                        if(obj.input) {
+                            obj.timer++;
+                            if(obj.timer > 120) {
+                                const outType = obj.input === 'fe_ore' ? 'fe_ingot' : (obj.input === 'cu_ore' ? 'cu_ingot' : null);
+                                obj.input = null; obj.timer = 0;
+                                if(outType) {
+                                    const nextKey = `${cx+dx[obj.dir]},${cy+dy[obj.dir]}`;
+                                    if(grid[nextKey] && grid[nextKey].type === 'belt') grid[nextKey].items.push({t: outType, p: 0});
+                                    else resources[outType]++;
+                                }
+                            }
+                        }
+                    }
+                    if (obj.type === 'constructor') {
+                        drawFactory(x, y, obj.input != null);
+                        if(obj.input) {
+                            obj.timer++;
+                            if(obj.timer > 150) {
+                                const outType = obj.input === 'fe_ingot' ? 'fe_plate' : (obj.input === 'cu_ingot' ? 'cu_wire' : null);
+                                obj.input = null; obj.timer = 0;
+                                if(outType) {
+                                    const nextKey = `${cx+dx[obj.dir]},${cy+dy[obj.dir]}`;
+                                    if(grid[nextKey] && grid[nextKey].type === 'belt') grid[nextKey].items.push({t: outType, p: 0});
+                                    else resources[outType]++;
+                                }
+                            }
+                        }
+                    }
+                    // Zeige einen großen gelben Pfeil an, wo das Item rauskommt
+                    drawDirection(x, y, obj.dir, false);
+                }
+            }
+
+            for(let key in resources) {
+                const el = document.getElementById('res-' + key);
+                if(el) el.innerText = resources[key];
+            }
+            requestAnimationFrame(gameLoop);
+        }
+        gameLoop();
+    </script>
+</body>
+</html>
